@@ -1,4 +1,4 @@
-# compiler Diego
+# C compiler
 
-Contains part of a C compiler
+lexic, syntax and semanthic of a C compiler
 
