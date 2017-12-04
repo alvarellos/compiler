@@ -1,0 +1,1877 @@
+
+// LENGUAJE cUNED
+// Procesadores de Lenguaje 2.  CURSO 2016/2017
+
+// Autor: Diego Diaz Alvarellos 
+
+
+package compiler.syntax;
+
+// Declaración de importaciones 
+//(No modificar las proporcionadas. Se pueden agregar mas)
+
+import java_cup.runtime.Symbol;
+import java.util.*;
+
+import es.uned.lsi.compiler.lexical.*;
+import es.uned.lsi.compiler.code.*;
+import es.uned.lsi.compiler.intermediate.*;
+import es.uned.lsi.compiler.semantic.*;
+import es.uned.lsi.compiler.semantic.symbol.*;
+import es.uned.lsi.compiler.semantic.type.*;
+import es.uned.lsi.compiler.syntax.*;
+
+import compiler.CompilerContext;
+import compiler.lexical.*;
+import compiler.syntax.nonTerminal.*;
+import compiler.semantic.*;
+import compiler.semantic.symbol.*;
+import compiler.semantic.type.*;
+import compiler.intermediate.*;
+import compiler.code.*;
+
+//Imports usuario
+import java.util.Map.Entry;
+
+// Nuevos. Diego Diaz
+import compiler.intermediate.Factory.*;
+import compiler.syntax.Expresion.*;
+import compiler.zExtra.*;
+
+// Declaración del código de usuario
+
+action code   {:
+	
+	SyntaxErrorManager   syntaxErrorManager   = CompilerContext.getSyntaxErrorManager();
+	SemanticErrorManager semanticErrorManager = CompilerContext.getSemanticErrorManager ();
+	ScopeManagerIF       scopeManager         = CompilerContext.getScopeManager ();
+	FinalCodeFactoryIF   finalCodeFactory     = CompilerContext.getFinalCodeFactory ();
+
+
+  // Nuevo 
+	// Código final 
+
+		// Cadenas 
+	List cadenas = new ArrayList();
+
+	// Desplazamiento Campos Registro
+	int desplazaCampoReg = 5;
+
+  // Anidamiento de registro
+
+  int anidamientoReg       = -19; // Clave
+  int desplazaCampoAnidado =  -19; // Valor
+
+  // Map<Clave, Valor>
+  HashMap<Integer, Integer> diccionario = new HashMap<Integer, Integer>();
+
+	// Desplazamiento ambito
+	HashMap desplazaScope = new HashMap();
+
+  // Contador de sentencia RETURN
+  int retorno = 0;
+
+	// fin Nuevo código final
+
+
+  // Se instancian objetos factoría para la gestión de Símbolos y Tipos.
+  TablaSimbolos tablaSimbolos = new TablaSimbolos(scopeManager);
+  TablaTipos    tablaTipos    = new TablaTipos(scopeManager);
+
+  // ----------------------------------------------------------------
+  // Este código se puede incluir si se quiere
+  // prescindir de los mensajes de semanticErrorManager
+  // y obtener solamente los mensajes de SemanticError
+  // (hay que quitar tambien la llamada a semanticErrorManager) 
+
+  // Wrapper para construir la salida de los errores semánticos.
+  public void semanticFatalError(String errorMessage, Token token)
+  {
+    // Más información en API es.uned.lsi.compiler.semantic.SemanticError
+    SemanticError sError = new SemanticError(errorMessage);
+    sError.setLine(token.getLine());
+    sError.setColumn(token.getColumn());
+    semanticErrorManager.semanticFatalError(sError);
+  }
+
+  // ----------------------------------------------------------------
+
+
+:}	
+
+parser code {:
+	SyntaxErrorManager syntaxErrorManager = CompilerContext.getSyntaxErrorManager();
+	
+	public void syntax_error(Symbol symbol)
+	{ 
+	    Token token = (Token) symbol.value;
+	    syntaxErrorManager.syntaxError ("Error sintactico", token);	    
+	}
+		
+	public void unrecovered_syntax_error(java_cup.runtime.Symbol symbol)
+	{	
+	    Token token = (Token) symbol.value;
+	    syntaxErrorManager.syntaxFatalError ("Error fatal", token);
+	}
+:}
+
+// Declaración de terminales
+
+terminal Token CONSTANT;
+terminal Token MINUS;
+terminal Token ELSE;
+terminal Token FOR;
+terminal Token IF;
+terminal Token INT;
+terminal Token MAIN;
+terminal Token PRINTC;
+terminal Token PRINTI;
+terminal Token RETURN;
+terminal Token STRUCT;
+terminal Token VOID;
+terminal Token ID;
+terminal Token NUM;
+terminal Token ASSIGMENT;
+terminal Token SEMICOLON;
+terminal Token OBRACKET;
+terminal Token CBRACKET;
+terminal Token OBRACE;
+terminal Token CBRACE;
+terminal Token POINT;
+terminal Token EQUAL;
+terminal Token MORE;
+terminal Token OR;
+terminal Token COMMA;
+terminal Token TCHAIN;
+
+
+// Se han realizado modificaciones en el sintáctico
+
+non terminal program;
+non terminal Axiom		axiom;
+non terminal constante;
+non terminal decconstantes;
+non terminal tipo;
+non terminal ListaTipos camporeg;
+non terminal ListaTipos camporegB;
+non terminal ListaTipos camporegC;
+non terminal dectipos;
+non terminal DeclaracionVariable variable;
+non terminal ListaVariables variableA;
+non terminal ListaVariables variableB;
+non terminal Token variableC;
+non terminal DeclaracionVariables decvariables;
+non terminal Expresion expresion;
+non terminal Expresion expLog;
+non terminal ExpresionAsignacion expAsig;
+non terminal ExpresionAccesoRegistro expAcceso;
+non terminal LlamadaSubprograma invFunc;
+non terminal ListaParametros	invFuncA;
+non terminal Subprograma funcion;
+non terminal CuerpoFuncion	funcionA;
+non terminal DeclaracionListaParametros funcionE;
+non terminal DeclaracionFuncion funcionS;
+non terminal Subprogramas decfunciones;
+non terminal Axiom	main;
+non terminal Bloque bloqueMain;
+non terminal SentenciaRepeticion sentFor;
+non terminal SentenciaSalidaValor sentSalidaValor;
+non terminal SentenciaSalidaCadena sentSalidaCadena;
+non terminal Sentencia	sentencia;
+non terminal BloqueInstrucciones	bloqueSent;
+non terminal Sentencias sentLocales;
+non terminal SentenciaSeleccion sent_if;
+
+// Declaración de relaciones de precedencia
+precedence right	ASSIGMENT;
+precedence left		OR;
+precedence left		EQUAL;
+precedence left 	MORE;
+precedence left		MINUS;
+precedence left   POINT, OBRACKET, CBRACKET;
+precedence nonassoc ELSE, IF, ID;
+
+// Declaración de reglas de producción
+
+start with program;
+
+program ::= 
+  {: syntaxErrorManager.syntaxInfo ("Starting parsing..."); 
+	
+  :}
+  axiom:ax
+  {: 
+      // No modificar esta estructura, aunque se pueden añadir más acciones semánticas
+      
+     // Se ha cambiado esta linea 
+     // List<QuadrupleIF> intermediateCode = ax.getIntermediateCode ();
+     // por esta otra
+     List intermediateCode = ax.getIntermediateCode ();
+
+    // Para el código final activar
+    finalCodeFactory.setEnvironment(CompilerContext.getExecutionEnvironment());
+    finalCodeFactory.create (intermediateCode);
+    // fin del código final
+
+      // En caso de no comentarse las sentencias anteriores puede generar una excepcion
+      // en las llamadas a cupTest si el compilador no está completo. Esto es debido a que 
+      // aún no se tendrá implementada la generación de código intermedio ni final.
+      // Para la entrega final deberán descomentarse y usarse.
+      
+      syntaxErrorManager.syntaxInfo ("Parsing process ended.");
+  :};
+
+
+// **********************************************************************************************************
+// Análisis sintáctico
+// axiom ::= decconstantes dectipos decvariables decfunciones;
+
+// Análisis semántico
+axiom ::=  {:
+           String nombre = "global";
+           ScopeIF scope = scopeManager.openScope(nombre);
+           TypeTableIF typeTable = scope.getTypeTable();
+           
+           //Declaramos tipos Simples
+           // Entero (int)
+           TypeSimple entero = new TypeInteger(scope,"Integer");
+           typeTable.addType("int", entero);
+           
+           // Vacío (void)
+           TypeSimple vacio = new TypeVoid(scope,"void");
+           typeTable.addType("void", vacio);
+
+          // Fin declaración tipos simples
+           System.out.println("[TIPOS simples] "+ scope.getTypeTable());
+
+           :} decconstantes dectipos decvariables:dv decfunciones:ax
+
+           // ***** SOLAMENTE TABLA SIMBOLOS DEBUGGER ****************
+           // Si se quiere ver solamente la tabla de símbolos, 
+           // cambiar por esta otra línea
+           //  decconstantes dectipos decvariables decfunciones main:ax
+           // *********************************************************
+
+           {:
+        
+           // Código FINAL (esto por ahora no )
+           ActivaMemoria.mapeo();
+           int direccion = ActivaMemoria.getDireccionSiguinteGlobal();
+           // fin código final
+
+            // Código intermedio
+            ScopeIF scope = scopeManager.getCurrentScope();
+            Variable var = new Variable(scopeManager.getCurrentScope().getName(),scope);
+
+            desplazaScope.put(scopeManager.getCurrentScope().getName(), scope);
+            var.setTablaDesplazamiento(desplazaScope);
+
+            // Crear el array de Código intermedio de todo el árbol sintáctico
+            IntermediateCodeBuilder iCB = new IntermediateCodeBuilder(scope);
+            // cuadrupla inicio de programa
+            iCB.addQuadruple("INIT", new Value(direccion), ax.getLabel());
+            // Se añaden él resto de cláusulas
+            iCB.addQuadruples(ax.getIntermediateCode());
+            // cuadrupla final de programa
+            iCB.addQuadruple("HALT");
+            ax.setIntermediateCode(iCB.create());
+
+            // *************** MOSTRAR CUADRUPLAS DEGUGGER ************************                              
+/*            String cuadruplas = "";
+             List<QuadrupleIF> intermediateCode = ax.getIntermediateCode();
+              for(QuadrupleIF q : intermediateCode)
+              {
+                  cuadruplas += q.toString() + "\n";
+              }
+             semanticErrorManager.semanticDebug ("[Cuadruplas]  \n" + cuadruplas);*/
+            // *************** MOSTRAR CUADRUPLAS DEGUGGER ************************   
+
+              RESULT=ax;
+
+            :};
+
+
+// **********************************************************************************************************
+//Declaración de constantes
+
+// Cambio esta regla porque quito constanteS
+// decconstantes ::= constanteS decconstantes |;
+
+decconstantes ::= constante decconstantes |;
+
+// Análisis sintáctico
+
+// Esta regla la incluyo en constante
+// constanteS ::= CONSTANT constante;
+
+// Análisis sintáctico
+// constante ::= ID NUM SEMICOLON;
+
+// Análisis semántico
+constante ::= CONSTANT ID:id NUM:natural SEMICOLON
+			{:
+				String   nombre = id.getLexema();
+				SymbolIF simbolo = null;
+				Integer miConstante = null;
+
+        miConstante = new Integer(Integer.valueOf(natural.getLexema()).intValue());
+        simbolo = new SymbolConstantInteger(nombre, miConstante);
+
+          if(!tablaSimbolos.addSymbol(simbolo))
+          { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_constante_declarada, id); }
+
+			:};
+
+// **********************************************************************************************************
+//Declaración de tipos Estricturado (REGISTRO)
+
+dectipos ::= tipo dectipos |;
+
+// Análisis sintáctico
+// tipo ::= STRUCT ID OBRACE camporeg CBRACE ;
+
+// Análisis semántico
+tipo ::= STRUCT ID:idreg OBRACE camporeg:listaCampos CBRACE 
+	{:
+     // Identificar si el simbolo esta utilizado por constante
+     String nombre = idreg.getLexema();
+     ScopeIF scope = scopeManager.getCurrentScope();
+     SymbolTableIF tabla_hija = scope.getSymbolTable();
+
+      if(tabla_hija.containsSymbol(nombre))
+        {  semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_utilizado_constante, idreg); }
+
+    	TypeRecord tipoRegistro = new TypeRecord(scope, idreg.getLexema());
+
+      if (!tablaTipos.addType(tipoRegistro))
+        {  semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_duplicado, idreg); }
+
+		  // Comprobar que los campos de registro no se repiten
+
+      int desplReg=0;
+      for (int i = listaCampos.size()-1; i>=0 ;i--){
+            CampoReg c = (CampoReg) listaCampos.get(i);
+            SymbolVariable var = (SymbolVariable) c.getSimbolo();
+            var.setDesplazamiento(desplReg);
+        desplReg++;
+        if (!tipoRegistro.contieneCampo(c.getNombre()) ){
+          tipoRegistro.addCampos(c.getNombre(), var);
+          //Si el campo es de tipo registro comprobamos nivel de anidamiento
+          TypeIF tipo = var.getType();
+          if (tipo instanceof TypeRecord){
+            HashMap<String, SymbolIF> campos_registro = ((TypeRecord)tipo).getCamposTabla();
+            for(Map.Entry<String, SymbolIF> entry : campos_registro.entrySet()){
+              if (entry.getValue().getType() instanceof TypeRecord){
+                semanticErrorManager.semanticFatalError(SemanticErrors.Nivel_anidamiento_excedido, idreg);
+              }
+            }
+          }
+        } else{
+                semanticErrorManager.semanticFatalError(SemanticErrors.Campo_ya_declarado, idreg);
+               }
+      }
+      tipoRegistro.setSize(desplReg);
+  :};
+
+camporeg ::= camporegB:listaCampos_B  
+           {: 
+             ListaTipos listaCampos;
+
+             if (listaCampos_B == null) {
+                listaCampos = new ListaTipos();
+             }else{
+                listaCampos = new ListaTipos(listaCampos_B);
+             }
+            RESULT = listaCampos;
+
+            :}
+          
+          | camporeg:listaCampos camporegB:listaCampos_B 
+          {: 
+
+           if (listaCampos == null){
+            listaCampos = new ListaTipos();
+           }
+
+           if (listaCampos_B != null){
+            listaCampos.addLista(listaCampos_B);
+           }
+            RESULT = listaCampos;
+
+          :};
+
+// Análisis sintáctico
+
+// camporegB ::= INT ID SEMICOLON 
+// 			| ID ID SEMICOLON 
+// 			| INT ID camporegC 			
+//  		| ID ID camporegC;
+
+
+// Análisis semántico
+camporegB ::= INT:tipoPrimitivo ID:idVar SEMICOLON
+          {:  
+             // Añadir ID de variable con tipo INT
+             ScopeIF scope = scopeManager.getCurrentScope();
+             // Tabla del ámbito propio
+             TypeTableIF tablaTipos = scope.getTypeTable();
+             //SymbolIF simbolo = new SymbolVariable(scope,idVar.getLexema(),scopeManager.searchType(tipoPrimitivo.getLexema()), despl);
+             SymbolIF simbolo = new SymbolVariable(scope,idVar.getLexema(), new TypeInteger(scope) , desplazaCampoReg);
+             ListaTipos listaCampos_B = new ListaTipos();
+
+             CampoReg campos = new CampoReg (idVar.getLexema(), null, idVar.getLine(), idVar.getColumn(),simbolo);
+             listaCampos_B.add(campos);
+             RESULT = listaCampos_B;
+          :}  
+
+      | ID:tipoRegistro ID:idVar SEMICOLON
+        {:
+            // Añadir ID de variable con tipo Registro
+             ScopeIF scope = scopeManager.getCurrentScope();
+             // Si quisieramos que solamente se aniden tipos del mismo ámbito :
+             //TypeTableIF tablaTipos = scope.getTypeTable();
+             //Comprobamos que el tipo se haya declarado previamente
+             if (!tablaTipos.containsType(tipoRegistro.getLexema())){
+              semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_no_declarado, tipoRegistro);
+             }
+             SymbolIF simbolo = new SymbolVariable(scope,idVar.getLexema(),scopeManager.searchType(tipoRegistro.getLexema()), desplazaCampoReg);
+             ListaTipos listaCampos_B = new ListaTipos();
+
+             CampoReg campos = new CampoReg (idVar.getLexema(), null, idVar.getLine(), idVar.getColumn(),simbolo);
+             listaCampos_B.add(campos);
+             RESULT = listaCampos_B;
+        :}
+
+      | INT:tipoPrimitivo ID:idVar camporegC:listaCampos_C
+        {:
+             // Añadir ID de variable con tipo INT a lista objetos registro
+             ScopeIF scope = scopeManager.getCurrentScope();
+             TypeTableIF tablaTipos = scope.getTypeTable();
+             SymbolIF simbolo = new SymbolVariable(scope,idVar.getLexema(),new TypeInteger(scope), desplazaCampoReg);
+             ListaTipos listaCampos_B;
+          
+             if (listaCampos_C==null || listaCampos_C.getVariables() == null) {
+              listaCampos_B = new ListaTipos();
+             }else{
+              //Recorremos la lista de símbolos y les asociamos el tipo adecuado
+              List<Object> listaVariables_C = listaCampos_C.getVariables();
+              for(Object simbolo_c : listaVariables_C){
+                ((CampoReg)simbolo_c).getSimbolo().setType(new TypeInteger(scope));
+              }
+              listaCampos_B = new ListaTipos(listaCampos_C);
+             }
+             //for(campos : listaCampos_C){por cada simbolo, le asignamos el tipo del tipoPrimitivo}
+             CampoReg campos = new CampoReg (idVar.getLexema(), null, idVar.getLine(), idVar.getColumn(),simbolo);
+             listaCampos_B.add(campos);
+             RESULT = listaCampos_B;
+        :}
+
+      | ID:tipoRegistro ID:idVar camporegC:listaCampos_C
+      {:
+             // Añadir ID de variable con tipo Registro a lista objetos registro
+             ScopeIF scope = scopeManager.getCurrentScope();
+             // Si quisieramos que solamente se aniden tipos del mismo ámbito :
+             // TypeTableIF tablaTipos = scope.getTypeTable();
+             //Comprobamos que el tipo se haya declarado previamente
+             if (!tablaTipos.containsType(tipoRegistro.getLexema())){
+              semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_no_declarado, tipoRegistro);
+             }
+             SymbolIF simbolo = new SymbolVariable(scope,idVar.getLexema(),scopeManager.searchType(tipoRegistro.getLexema()), desplazaCampoReg);
+             ListaTipos listaCampos_B;
+             if (listaCampos_C==null) {
+              listaCampos_B = new ListaTipos();
+             }else{
+              //Recorremos la lista de símbolos y les asociamos el tipo adecuado
+              for(Object simbolo_c : listaCampos_C.getVariables()){
+                ((CampoReg)simbolo_c).getSimbolo().setType(scopeManager.searchType(tipoRegistro.getLexema()));
+              }
+                listaCampos_B = new ListaTipos(listaCampos_C);
+             }
+             CampoReg campos = new CampoReg (idVar.getLexema(), null, idVar.getLine(), idVar.getColumn(),simbolo);
+             listaCampos_B.add(campos);
+             RESULT = listaCampos_B;
+      :};
+
+// Análisis sintáctico
+// camporegC ::= COMMA ID camporegC 
+//       | COMMA ID SEMICOLON ;
+
+
+// Análisis semántico   
+camporegC ::= COMMA ID:idVar camporegC:otra
+      {:
+            // Añadir ID de variable con tipo Registro/INT a lista objetos registro
+             ScopeIF scope = scopeManager.getCurrentScope();
+             // Tabla del ámbito propio
+             TypeTableIF tablaTipos = scope.getTypeTable();
+             SymbolIF simbolo = new SymbolVariable(scope,idVar.getLexema(),null);
+             ListaTipos listaCampos_C;          
+             if (otra==null) {
+                listaCampos_C = new ListaTipos();
+             }else{
+                listaCampos_C= new ListaTipos(otra);
+             }
+             CampoReg campos = new CampoReg (idVar.getLexema(), null, idVar.getLine(), idVar.getColumn(),simbolo);
+             listaCampos_C.add(campos);
+             RESULT = listaCampos_C;
+
+
+      :}
+
+      | COMMA ID:idVar SEMICOLON 
+      {:
+            // Añadir ID de variable con tipo Registro/INT a lista objetos registro
+             ScopeIF scope = scopeManager.getCurrentScope();
+             // Tabla del ámbito propio
+             TypeTableIF tablaTipos = scope.getTypeTable();
+             SymbolIF simbolo = new SymbolVariable(scope,idVar.getLexema(),null);
+             ListaTipos listaCampos_C = new ListaTipos();
+             CampoReg campos = new CampoReg (idVar.getLexema(), null, idVar.getLine(), idVar.getColumn(),simbolo);
+             listaCampos_C.add(campos);
+
+             RESULT = listaCampos_C;
+      :} ;
+
+// **********************************************************************************************************
+
+//Declaración de variables
+
+// Sintáctico
+// decvariables ::= decvariables variable|;
+
+// Semántico
+
+decvariables ::= decvariables:dv variable:variable_nueva
+              {:
+
+                ScopeIF scope = scopeManager.getCurrentScope();
+                DeclaracionVariables lista_variables = new DeclaracionVariables();
+                lista_variables.addVariable(variable_nueva);
+                // Recorre array de variables
+                // Comprobación de identificadores duplicados
+
+                // DeclaracionVariables
+                for(DeclaracionVariable declara_variable : lista_variables.getVariable_Lista_Declaraciones()) 
+                  {
+                    TypeIF tipo = declara_variable.getType();
+                    // DeclaracionVariable
+                    for(TokenVar variable : declara_variable.getListaVariables()) 
+                    {
+                      Token token = variable.getToken();
+                      Token valor_asignado = variable.getValorAsignado();
+                      if (valor_asignado != null){
+                        //Validamos según tipo
+                        if (tipo instanceof TypeRecord){
+                          //Si es un tipo registro no se permite asignación en la declaración
+                          semanticErrorManager.semanticFatalError(SemanticErrors.Variable_no_permitida, token);
+                        }else{
+                          //Si es un tipo primitivo solo aceptamos valores numéricos y constantes
+                          if (!TypeInteger.EsEntero(valor_asignado.getLexema(),false)){
+                            //Comprobamos que sea una constante declarada
+                            SymbolIF simbolo = scopeManager.searchSymbol(valor_asignado.getLexema());
+                            if (!(simbolo instanceof SymbolConstant))
+                            { semanticErrorManager.semanticFatalError(SemanticErrors.Asignacion_ValorNoValido, token); }
+                          }
+                        }
+                      }
+                      //Comprobamos que no exista un tipo con ese nombre
+
+                           ScopeIF scopeActual = scopeManager.getCurrentScope();
+                           // Tabla del ámbito propio
+                           TypeTableIF tabla_hija = scopeActual.getTypeTable();
+
+                     if (tabla_hija.containsType(token.getLexema())){
+                        semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_duplicado_tipo, token);
+                      }
+                      // Comprobación de símbolo de variable
+          
+                      Integer miValorVariable = 0;
+                      
+                      if (variable.getValorAsignado() == null){
+                          if(!tablaSimbolos.addSymbol(new SymbolVariable(scope, token.getLexema(), declara_variable.getType(), 0)))
+                            { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_duplicado, token); }
+                      
+                      } else {
+                            SymbolBase simbolo = (SymbolBase) scopeManager.searchSymbol(valor_asignado.getLexema());
+
+                            // La asignación es con una constante declarada
+                            if (simbolo instanceof SymbolConstant){
+
+                              SymbolConstantInteger constanteAsignacion = (SymbolConstantInteger) simbolo;
+
+                              miValorVariable = new Integer(constanteAsignacion.getEntera());
+                              // miValorVariable = new String(String.valueOf(variable.getValorAsignado().getLexema()).intValue());
+
+                              if(!tablaSimbolos.addSymbol(new SymbolVariable(scope, token.getLexema(), declara_variable.getType(), miValorVariable, true)))
+                              { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_duplicado, token); }
+
+/*                                // Si se quiere subir el CI desde aqui
+                                 // Buscamos la nueva variable inicializada 
+                                 SymbolIF variableInicializada = scopeManager.searchSymbol(variable.getToken().getLexema());
+
+                                 IntermedioDeclaracionVariables varIni = new IntermedioDeclaracionVariables(variableInicializada, variable);
+                                 varIni.codigoIntermedio();
+
+                                  ListaVarINI iniVAR = new ListaVarINI();
+                                  iniVAR.addVarINI(varIni);
+
+                                  RESULT = iniVAR;*/
+
+                            }
+
+                            else{ 
+                              // La asignación es con un entero
+                              miValorVariable = new Integer(Integer.valueOf(variable.getValorAsignado().getLexema()).intValue());
+             
+                              if(!tablaSimbolos.addSymbol(new SymbolVariable(scope, token.getLexema(), declara_variable.getType(), miValorVariable, true)))
+                              { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_duplicado, token); }
+                                 
+/*                               // Si se quiere subir el CI desde aqui
+                                 // Buscamos la nueva variable inicializada 
+                                 SymbolIF variableInicializada = scopeManager.searchSymbol(variable.getToken().getLexema());
+
+                                 IntermedioDeclaracionVariables varIni = new IntermedioDeclaracionVariables(variableInicializada, variable);
+                                 varIni.codigoIntermedio();
+
+                                 ListaVarINI iniVAR = new ListaVarINI();
+                                 iniVAR.addVarINI(varIni);
+
+                                  RESULT = varIni;*/
+
+                          }
+                      }
+
+
+                    }
+                  }
+
+
+              :}
+
+              | {: IntermedioDeclaracionVariables var = new IntermedioDeclaracionVariables(); RESULT = var; :} ;
+
+// Sintáctico
+// variable ::= ID variableA 
+// 			| INT variableA ;
+
+// Semántico
+variable ::= ID:tipoRegistro variableA:lista_A
+         {: 
+            // Se busca el identificador (ya se sabe que es registro)
+            // y se declara la variable
+            String   nombre = tipoRegistro.getLexema();
+            TypeRecord tipo = (TypeRecord)scopeManager.searchType(nombre);
+            if (tipo == null){
+              semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_no_declarado, tipoRegistro);
+            }
+            DeclaracionVariable variable_nueva = new DeclaracionVariable(lista_A, tipo); 
+
+            RESULT = variable_nueva;
+         :}
+
+         | INT:tipoPrimitivo variableA:lista_A
+         {: 
+            ScopeIF scope = scopeManager.getCurrentScope();
+            DeclaracionVariable variable_nueva = new DeclaracionVariable(lista_A, new TypeInteger(scope)); 
+            RESULT = variable_nueva;
+         :};
+
+
+// Sináctico
+// variableA ::=  ID SEMICOLON 
+// 			 | ID variableB SEMICOLON 			 
+// 			 | ID variableC SEMICOLON 
+// 			 | ID variableC variableB SEMICOLON ;
+
+// Semántico
+variableA ::=  ID:idVar SEMICOLON
+       {:
+          // Se guarda identificadores en una lista
+          ListaVariables lista_A = new ListaVariables();
+          lista_A.addToken(idVar);
+          RESULT = lista_A;
+       :} 
+       | ID:idVar variableB:lista_B SEMICOLON
+       {:
+          // Se guarda identificadores en una lista
+          ListaVariables lista_A = new ListaVariables();
+          lista_A.addToken(idVar);
+          if (lista_B != null){
+            lista_A.addLista(lista_B);
+          }
+          RESULT = lista_A;
+       :}         
+       | ID:idVar variableC:var_c SEMICOLON
+       {:
+          // Se guarda identificadores en una lista
+          ListaVariables lista_A = new ListaVariables();
+          TokenVar var = new TokenVar(idVar, var_c);
+          lista_A.addVariable(var);
+          RESULT = lista_A;   
+       :} 
+       | ID:idVar variableC:var_c variableB:lista_B SEMICOLON
+       {:
+          // Se guarda identificadores en una lista
+          ListaVariables lista_A = new ListaVariables();
+          TokenVar var = new TokenVar(idVar, var_c);
+          lista_A.addVariable(var);
+          if (lista_B != null){
+            lista_A.addLista(lista_B);
+          }
+          RESULT = lista_A;    
+       :} ;
+
+// Sintáctico
+// variableB ::= COMMA ID variableB 
+// 			| COMMA ID 
+// 			| COMMA ID variableC 
+// 			| COMMA ID variableC variableB;
+
+// Semántico
+variableB ::= COMMA ID:idVar variableB:lista_B
+          {:
+            // Se guarda identificadores en una lista
+            if (lista_B == null){
+              lista_B = new ListaVariables();
+            }
+            lista_B.addToken(idVar);
+            RESULT = lista_B;
+          :}
+
+          | COMMA ID:idVar
+          {:
+            // Se guarda identificadores en una lista
+            ListaVariables lista_B = new ListaVariables();
+            
+            lista_B.addToken(idVar);
+            RESULT = lista_B;
+          :}
+
+          | COMMA ID:idVar variableC:var_c
+          {:
+            // Se guarda identificadores en una lista            
+            ListaVariables lista_B = new ListaVariables();
+            TokenVar var = new TokenVar(idVar, var_c);
+            lista_B.addVariable(var);
+            RESULT = lista_B;
+          :}
+
+          | COMMA ID:idVar variableC:var_c variableB:lista_B
+          {:
+            // Se guarda identificadores en una lista
+            if (lista_B == null){
+              lista_B = new ListaVariables();
+            }
+            TokenVar var = new TokenVar(idVar, var_c);
+            lista_B.addVariable(var);
+
+            RESULT = lista_B;
+          :};
+
+
+variableC ::= ASSIGMENT NUM:valor
+      {:
+        RESULT = valor;
+      :}
+            | ASSIGMENT ID:idConstante 
+            {:
+              RESULT = idConstante;
+            :};
+
+
+// **********************************************************************************************************     
+//Declaración funciones
+
+// decfunciones ::= funcion decfunciones | main:principal {: RESULT = principal; :} ;
+
+decfunciones ::= funcion:funcion  decfunciones: sub
+                  {:
+
+                   Subprogramas subPro = new Subprogramas();
+                   subPro.addSubprograma(funcion);
+                   subPro.addSubprograma(sub);
+                   RESULT = subPro;
+                 :}
+
+                | main:principal 
+
+                {: 
+
+                  Subprogramas subPro = new Subprogramas();
+                  subPro.getIntermediateCode().addAll(principal.getIntermediateCode());
+                  RESULT = subPro; 
+
+                  :} ;
+
+// Sintático
+ // funcion ::= VOID ID  OBRACKET funcionS 
+ //       | INT ID  OBRACKET funcionS;
+
+// Semántico
+funcion ::= VOID:tipoVoid ID:id  
+    {:       
+      //Creamos un nuevo ámbito para la función
+      String nombre = id.getLexema();
+      scopeManager.openScope(nombre);
+      
+       if(scopeManager.containsSymbol(nombre))
+          // Simbolo duplicado: identificador ya utilizado
+          {  semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_Ident_utilizado, id); }
+          if(scopeManager.containsType(nombre))
+          // Tipo duplicado: ya se ha declarado un tipo con ese identificador
+          { semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_Ident_utilizado, id); }
+
+        SymbolFunction sf = new SymbolFunction(scopeManager.getCurrentScope(),id.getLexema(),scopeManager.searchType(tipoVoid.getLexema()));
+        tablaSimbolos.addSymbol(sf);
+
+    :} OBRACKET funcionS:valor_S
+    {:
+
+        String nombre = id.getLexema();        
+        TypeIF tipoRetorno = scopeManager.searchType(tipoVoid.getLexema());
+        valor_S.setNombre(id.getLexema());
+        DeclaracionListaParametros dec_parametros = valor_S.getListaParametros();
+        ArrayList<SymbolParameter> listaParametros = null;
+        if (dec_parametros != null){
+          listaParametros = dec_parametros.getParametros();
+        }
+
+      //Comprobamos que el tipo de la expresión de retorno es correcto
+      CuerpoFuncion cuerpo = valor_S.getCuerpoFuncion();
+      if (cuerpo.getListaSentencias() != null){
+        ArrayList<Sentencia> listaSentencias = cuerpo.getListaSentencias().getListaSentencias();
+        if (listaSentencias != null && listaSentencias.size() > 0){
+          for(Sentencia sent : listaSentencias){
+            if (sent instanceof SentenciaReturn){
+              Expresion expretorno = ((SentenciaReturn)sent).getExpresion();
+              if (expretorno != null)
+              { semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_incorrecto_retorno_1, id);}
+            }
+          }
+        }
+      }
+
+
+       SymbolFunction sff = (SymbolFunction)tablaSimbolos.searchSymbol(id.getLexema());
+       sff.set_devuelve_tipo(tipoRetorno);
+       sff.set_lista_parametros_formales(listaParametros);
+
+        scopeManager.closeScope();  
+
+      // Se necesita capturar el bloque de delcaraciones
+      IntermedioSubprograma subProg = new IntermedioSubprograma(cuerpo, tipoRetorno);
+      subProg.codigoIntermedio(nombre);
+      RESULT = subProg;
+
+
+      :} 
+
+      // Funciones que devuelven tipo entero
+      | INT:tipoPrimitivo ID:id 
+
+    {:                
+      //Creamos un nuevo ámbito para la función
+      String nombre = id.getLexema(); 
+      ScopeIF scope = scopeManager.openScope(nombre);
+
+      if(scopeManager.containsSymbol(nombre))
+      // Simbolo duplicado: identificador ya utilizado
+      {  semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_Ident_utilizado, id); }
+      if(scopeManager.containsType(nombre))
+      // Tipo duplicado: ya se ha declarado un tipo con ese identificador
+      { semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_Ident_utilizado, id); }
+
+      SymbolFunction sf = new SymbolFunction(scopeManager.getCurrentScope(),id.getLexema(),new TypeFunction(scope));
+      sf.set_devuelve_tipo(new TypeInteger());
+      tablaSimbolos.addSymbol(sf);
+  
+
+    :} OBRACKET funcionS:valor_S
+    
+    {:  
+
+      String nombre = id.getLexema(); 
+      ScopeIF scope = scopeManager.getCurrentScope();
+      TypeIF tipoRetorno = new TypeInteger(scope);
+      valor_S.setNombre(id.getLexema());
+      DeclaracionListaParametros dec_parametros = valor_S.getListaParametros();
+      ArrayList<SymbolParameter> listaParametros = null;
+      if (dec_parametros != null){
+        listaParametros = dec_parametros.getParametros();
+      }
+
+      //Comprobamos que contenga instrucción de retorno
+      //if (!valor_S.tieneRetorno())
+      //{ semanticErrorManager.semanticFatalError(SemanticErrors.No_instruccion_retorno, id);}
+      
+      //Comprobamos que el tipo de la expresión de retorno es correcto
+      CuerpoFuncion cuerpo = valor_S.getCuerpoFuncion();
+      ArrayList<Sentencia> listaSentencias = cuerpo.getListaSentencias().getListaSentencias();
+
+      // Comprobacion si Retorno correcto (deja de funcionar)
+      if (listaSentencias != null && listaSentencias.size() > 0){
+        for(Sentencia sent : listaSentencias){
+          if (sent instanceof SentenciaReturn){
+            Expresion expretorno = ((SentenciaReturn)sent).getExpresion();            
+              if (expretorno == null || !(expretorno.getTipoExpresion() instanceof TypeInteger))
+            { semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_incorrecto_retorno_2, id);}
+
+        // Se añade el retorno (ojo que está duplicado el símbolo)
+
+          TypeInteger tipo = new TypeInteger(scopeManager.getCurrentScope());
+          ScopeIF ambito = scopeManager.getCurrentScope();
+          SymbolReturn retornoFuncion = new SymbolReturn(ambito, nombre, tipo);
+          tablaSimbolos.addSymbol(retornoFuncion);
+
+          // duplicado ----
+
+          // Se hace la asignación del Retorno a la expresión de retorno
+          SymbolIF simbolo = scopeManager.searchSymbol(nombre);
+          Reference   referencia  = new Reference(simbolo, true);
+          //ExpresionID expID = new ExpresionID(simbolo.getType());  
+
+           // Código Intermedio -- (No hay clase)
+           expretorno.setTemporal(referencia.get_temporal());
+           expretorno.setIntermediateCode(referencia.getICB().create());
+           // Fin código Intermedio
+
+          }
+        }
+      }
+      
+     SymbolIF sff = tablaSimbolos.searchSymbol(id.getLexema());
+      if(sff instanceof SymbolFunction){
+        ((SymbolFunction)sff).set_devuelve_tipo(tipoRetorno);
+        ((SymbolFunction)sff).set_lista_parametros_formales(listaParametros);
+      }
+      else{
+        sff= new SymbolFunction(scopeManager.getParentScope(), id.getLexema(), scopeManager.searchType(id.getLexema()), listaParametros, tipoRetorno);
+      }
+
+      scopeManager.closeScope();
+
+      // Se necesita capturar el bloque de delcaraciones
+      IntermedioSubprograma subProg = new IntermedioSubprograma(cuerpo, tipoRetorno);
+      subProg.codigoIntermedio(nombre);
+      RESULT = subProg;
+
+    :}; 
+
+
+funcionS ::= funcionE:valor_E CBRACKET OBRACE {:
+    
+    ScopeIF scope = scopeManager.getCurrentScope();
+    TypeFunction tf = new TypeFunction(scopeManager.getScope(0), scope.getName(),valor_E);
+    tablaTipos.addType(tf);
+    SymbolIF sf = scopeManager.getParentScope().getSymbolTable().getSymbol(scope.getName());
+
+    if(sf instanceof SymbolFunction){
+      ((SymbolFunction)sf).set_lista_parametros_formales(valor_E.getParametros());
+    }
+
+  :}funcionA:valor_A CBRACE
+    {:
+      DeclaracionFuncion dec = new DeclaracionFuncion(valor_E);
+      dec.setCuerpoFuncion(valor_A);
+
+      RESULT = dec;
+    :}
+        |CBRACKET {:
+            ScopeIF scope = scopeManager.getCurrentScope();
+            TypeFunction tf = new TypeFunction(scopeManager.getScope(0), scope.getName(),null);
+            tablaTipos.addType(tf);
+
+          :} OBRACE funcionA:valor_A  CBRACE
+        {:
+          DeclaracionFuncion dec = new DeclaracionFuncion();
+          dec.setCuerpoFuncion(valor_A);
+
+          RESULT = dec;
+        :};
+
+// Se cambian todas estas reglas
+// funcionA ::= funcionB funcionC funcionD;
+// funcionB ::= tipo  funcionB |;
+// funcionC ::= funcionC variable |;
+// funcionD ::= sentencia funcionD |; 
+
+// por su equivalente
+
+funcionA ::= dectipos decvariables sentLocales:listaSent
+      {:
+        CuerpoFuncion cuerpo = new CuerpoFuncion(listaSent);
+        RESULT = cuerpo;
+      :};
+
+// **********************************************************************************************************
+
+//Declaración de parámetros función     
+funcionE ::= INT:tipoPrimitivo ID:idParam COMMA funcionE:valor_E
+     {: 
+        //Comprobamos que el parámetro no coincida con ninguna constante ya declarada
+        SymbolIF simbolo = scopeManager.searchSymbol(idParam.getLexema());
+        if (simbolo != null && simbolo instanceof SymbolConstant)
+        { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_utilizado_constante, idParam); }
+          
+        //Comprobamos que el parámetro no coincida con ningún tipo ya declarado
+        if (scopeManager.containsType(idParam.getLexema()))
+        { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_duplicado_tipo, idParam); }
+
+        ScopeIF scope = scopeManager.getCurrentScope();
+
+        SymbolParameter parametro = new SymbolParameter(scopeManager.getCurrentScope(), idParam.getLexema(), new TypeInteger(scope));
+        //Lo añadimos a la tabla de símbolos
+        if (!tablaSimbolos.addSymbol(parametro))
+        { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_duplicado, idParam); }
+        valor_E.addParameter(parametro);
+
+        RESULT = valor_E;
+     :} 
+       | INT:tipoPrimitivo ID:idParam 
+       {:
+          //Comprobamos que el parámetro no coincida con ninguna constante ya declarada
+        SymbolIF simbolo = scopeManager.searchSymbol(idParam.getLexema());
+        if (simbolo != null && simbolo instanceof SymbolConstant)
+        { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_utilizado_constante, idParam); }
+
+          //Comprobamos que el parámetro no coincida con ningún tipo ya declarado
+        if (scopeManager.containsType(idParam.getLexema()))
+        { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_duplicado_tipo, idParam); }
+
+        ScopeIF scope = scopeManager.getCurrentScope();
+
+        SymbolParameter parametro = new SymbolParameter(scopeManager.getCurrentScope(), idParam.getLexema(), new TypeInteger(scope));
+
+          //Lo añadimos a la tabla de símbolos
+        if (!tablaSimbolos.addSymbol(parametro))
+        { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_duplicado, idParam); }
+
+        DeclaracionListaParametros lista = new DeclaracionListaParametros();          
+        lista.addParameter(parametro);
+
+        RESULT = lista;
+       :};   
+
+
+// **********************************************************************************************************
+// Análisis sintáctico
+// main ::= VOID MAIN OBRACKET CBRACKET OBRACE bloqueMain CBRACE;
+//Declaración main
+main ::= VOID MAIN:id OBRACKET 
+
+      {:
+
+        // scopeManager.closeScope(); 
+        String nombre = id.getLexema();
+        if(scopeManager.containsSymbol(nombre))
+        // Simbolo duplicado: identificador ya utilizado
+        {  semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_Ident_utilizado, id); }
+        if(scopeManager.containsType(nombre))
+        // Tipo duplicado: ya se ha declarado un tipo con ese identificador
+        { semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_Ident_utilizado, id); }
+        // Sin error, se crea un nuevo ámbito de subprograma.
+        scopeManager.openScope(nombre);
+
+      //Añadimos la función a la tabla de tipos
+       if (!tablaTipos.addType(new TypeFunction(scopeManager.getParentScope(),id.getLexema())))
+       { semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_Ident_utilizado, id); }
+
+      //Añadimos la función a la tabla de símbolos
+      if(!tablaSimbolos.addSymbol(new SymbolFunction(scopeManager.getParentScope(), id.getLexema(), scopeManager.searchType(id.getLexema()))))
+      { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_Ident_utilizado, id); }
+
+      :} CBRACKET OBRACE bloqueMain:bloqueSentencias
+
+      {: 
+
+        IntermedioAxiom ax = new IntermedioAxiom(id, bloqueSentencias);
+        ax.codigoIntermedio();
+
+        RESULT = ax; 
+
+
+        :} CBRACE {:   scopeManager.closeScope(); :};
+
+// Se cambian todas estas reglas
+// mainA ::= mainB mainC mainD;
+// mainB ::= tipo mainB |;
+// mainC ::= mainC variable|;            
+// mainD ::= sentencia mainD | ;
+
+// por su equivalente
+
+// cambio mainA por bloqueMain
+bloqueMain ::= dectipos decvariables sentLocales:sentLocales 
+        {: 
+          Bloque bloqueSentencias = new Bloque(sentLocales);
+          RESULT = bloqueSentencias; 
+          :} ;
+
+
+
+// **********************************************************************************************************
+//    Expresiones
+// **********************************************************************************************************
+
+expresion ::= expLog: expLogica {: RESULT = expLogica; :}
+            | expAsig: expAsignacion {: RESULT = expAsignacion; :} ;
+
+// **********************************************************************************************************
+
+//Expresión lógica y aritmética
+
+// Cambio estas dos reglas
+// expLog ::= expLog operador expLog 
+// 			| OBRACKET expLog  CBRACKET 
+// 			| ID 
+// 			| NUM
+// 			| invFunc | expAcceso;
+			
+// operador::= MINUS
+// 			| OR
+// 			| MORE
+// 			| EQUAL ;
+
+// Por esta equivalente
+
+// expLog ::= expLog MINUS expLog 
+//      | expLog OR expLog
+//      | expLog MORE expLog
+//      | expLog EQUAL expLog
+//      | OBRACKET expLog  CBRACKET 
+//      | ID
+//      | NUM
+//      | invFunc | expAcceso;
+
+expLog ::= expLog:exp1 MINUS:operador expLog:exp2 
+        {:
+
+         IntermedioExpresionRESTA expResta = null;
+         expResta = new IntermedioExpresionRESTA(exp1.getTipoExpresion());
+         expResta.codigoIntermedio(exp1,exp2);
+         RESULT = expResta;
+
+        :}
+
+     | expLog:exp1 OR:operador expLog:exp2
+        {:
+
+         IntermedioExpresionOR expOR = new IntermedioExpresionOR(new TypeBoolean(scopeManager.getCurrentScope()));
+         expOR.codigoIntermedio(exp1, exp2);
+         RESULT = expOR;
+
+        :}
+
+     | expLog:exp1 MORE:operador expLog:exp2
+        {:
+      
+        IntermedioExpresionMAYOR expMAYOR = new IntermedioExpresionMAYOR(new TypeBoolean(scopeManager.getCurrentScope()));
+        expMAYOR.codigoIntermedio(exp1, exp2);
+        RESULT = expMAYOR;
+
+        :}
+
+     | expLog:exp1 EQUAL:operador expLog:exp2 
+        {:
+        
+        IntermedioExpresionIGUAL expIGUAL = new IntermedioExpresionIGUAL(new TypeBoolean(scopeManager.getCurrentScope()));
+        expIGUAL.codigoIntermedio(exp1, exp2);
+        RESULT = expIGUAL;
+
+        :}
+
+     | OBRACKET expLog:parentesis  CBRACKET  {: RESULT = parentesis; :}
+     
+     | ID:id
+      {:
+        String nombre    = id.getLexema();
+        SymbolIF simbolo = scopeManager.searchSymbol(nombre);
+
+        // El símbolo no está registrado!
+        if(simbolo == null)
+        { semanticErrorManager.semanticFatalError(SemanticErrors.Operador_no_declarado, id); }
+
+        // Se comprueba que symbol es o una constante o una variable
+        // (primitiva o compuesta) o un parámetro formal.
+
+        // El símbolo no está registrado!
+        if(simbolo instanceof SymbolReturn)
+        { semanticErrorManager.semanticFatalError(SemanticErrors.Referencia_no_asignable, id); }
+
+        Reference   referencia  = new Reference(simbolo, true);
+
+        ExpresionID expID = new ExpresionID(simbolo, simbolo.getType(), id.getLexema());
+
+        // Código Intermedio -- (No hay clase)
+        expID.setTemporal(referencia.get_temporal());
+        expID.setIntermediateCode(referencia.getICB().create());
+        // Fin código Intermedio
+
+        RESULT = expID;
+
+      :}     
+     
+     | NUM:cteLiteral
+
+     {:
+
+        ScopeIF scope = scopeManager.getCurrentScope();
+        Value value = null;
+
+        // Casting del valor de NUM a Integer
+        Integer miConstante = new Integer(Integer.valueOf(cteLiteral.getLexema().toUpperCase()).intValue());
+        value = new Value(miConstante);
+
+        IntermedioExpresionConstanteLiteral expLITERAL = new IntermedioExpresionConstanteLiteral(new TypeInteger(scope), miConstante);
+        expLITERAL.codigoIntermedio(value);
+
+        RESULT = expLITERAL;
+      :}
+
+     | invFunc:llamadaSubP
+
+         {:  
+
+      // No se permite que la función invocada devuelva un tipo VOID en expresiones
+
+        Token id         = llamadaSubP.getId();
+        String nombre    = id.getLexema();
+        SymbolIF simbolo = scopeManager.searchSymbol(nombre);
+        TypeIF tipoRetorno = scopeManager.searchType(id.getLexema());
+        
+        SymbolFunction simboloFuncion = (SymbolFunction) simbolo;
+
+        if (!(simboloFuncion.get_devuelve_tipo() instanceof TypeInteger)){
+          semanticErrorManager.semanticFatalError(SemanticErrors.Retorno_de_funcion_incorrecto, id); }
+
+        // Código Intermedio
+        IntermedioExpresionLlamadaSubprograma expLlSub = new IntermedioExpresionLlamadaSubprograma(simboloFuncion, llamadaSubP);
+        expLlSub.codigoIntermedio();
+        RESULT = expLlSub;
+
+        :}    
+
+     | expAcceso:registro
+
+           {:
+
+            ScopeIF scope = scopeManager.getCurrentScope();
+            String identificadorRegisto = registro.getIdentificador();
+            String ident2 = registro.getIdentificador2();
+            String campoRegistro = registro.getCampo();
+
+            // Busco símbolo del tipo (identificadorRegistro)
+            SymbolIF simbolo = scopeManager.searchSymbol(identificadorRegisto);
+            //SymbolIF simbolo2 = scopeManager.searchSymbol(campoRegistro);
+            TypeIF tipo = scopeManager.searchType(simbolo.getType().getName());
+
+            TypeRecord tipoRec = (TypeRecord) scopeManager.searchType(simbolo.getType().getName());
+
+            HashMap tablaCampos = tipoRec.getCamposTabla();
+            SymbolVariable simboloC = (SymbolVariable) tablaCampos.get(campoRegistro);
+            SymbolIF simboloDeCampo = (SymbolIF) simboloC;
+
+            if (ident2 == null){
+
+            ExpresionAccesoRegistro exp = new ExpresionAccesoRegistro(simboloC.getTipo());
+            
+            desplazaCampoReg++;           
+            IntermedioExpresionAccesoRegistro expLlSub = new IntermedioExpresionAccesoRegistro(registro, exp, simbolo, simboloC, scope, desplazaCampoReg);
+            expLlSub.codigoIntermedio();
+ 
+            RESULT = expLlSub;
+
+          } else{
+
+            SymbolVariable simboloRegistro2 = (SymbolVariable) tablaCampos.get(ident2);
+            // Este el simbolo del campo de en medio
+            SymbolIF simboDeCampoIntermedio = (SymbolIF) simboloRegistro2;
+            // Hay que captar el tipo Registro de este campo para verificar el tipo del campo 
+            TypeRecord tipoRec2 = (TypeRecord) scopeManager.searchType(simboDeCampoIntermedio.getType().getName());
+
+            ExpresionAccesoRegistro exp = new ExpresionAccesoRegistro(tipoRec2.getTypeCampo(campoRegistro));
+
+            diccionario.put(anidamientoReg, desplazaCampoAnidado);
+
+            desplazaCampoAnidado++;   
+            IntermedioExpresionAccesoRegistro expLlSub = new IntermedioExpresionAccesoRegistro(registro, exp, simbolo, simboloC, scope, desplazaCampoAnidado, anidamientoReg, diccionario);
+            expLlSub.codigoIntermedio();
+ 
+            RESULT = expLlSub;
+
+          }
+      :}  ;
+      
+
+
+// **********************************************************************************************************
+
+//Expresión asignación
+// expAsig ::= ID ASSIGMENT expLog
+//       | expAcceso ASSIGMENT expLog ;
+expAsig ::= ID:id ASSIGMENT expLog:expLogica
+
+          {:
+
+              // Se comprueba la existencia del símbolo
+              String    nombre = id.getLexema();
+              SymbolIF simbolo = scopeManager.searchSymbol(nombre);
+              TypeIF      tipo = simbolo.getType();
+
+              // El símbolo de la parte izquierda no está declarado
+              // Esto me ha dejado de funcionar al incluir la asignacion inicial de variables
+              if ((simbolo == null)|| !(scopeManager.containsSymbol(nombre)))
+              { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_no_declarado, id); }
+
+              //  Se verifica que el tipo de la variable es de tipo entero.
+              if (!(tipo instanceof TypeInteger))
+                { semanticErrorManager.semanticFatalError(SemanticErrors.Asignacion_no_permitida, id); }
+
+              IntermedioExpresionAsignacion expAsignacion = new IntermedioExpresionAsignacion(simbolo, expLogica);
+              expAsignacion.codigoIntermedio();
+
+              RESULT = expAsignacion;
+
+          :}
+
+            // Expresion ASIGNACION Registros
+          | expAcceso:registro ASSIGMENT expLog:expLogica
+
+          {:   
+
+            ScopeIF scope = scopeManager.getCurrentScope();
+            String identificadorRegisto = registro.getIdentificador();
+            String ident2 = registro.getIdentificador2();
+            String campoRegistro = registro.getCampo();
+
+            // Posible pendiente ..........................................
+
+            // La asignación de tipo c1.fecha = f.dia  no está permitida
+             if(expLogica instanceof ExpresionAccesoRegistro)
+             { semanticErrorManager.semanticFatalError(SemanticErrors.Asignacion_no_permitida, null); }
+
+            // La asignación de tipo  c1.fecha (tipoReg) = f (var tipo Reg) no está permitida   
+            if(expLogica.getTipoExpresion() instanceof TypeRecord)
+            { semanticErrorManager.semanticFatalError(SemanticErrors.Asignacion_no_permitida, null); }
+
+            // -------------------------------------------------------------
+
+            // Busco símbolo del tipo (identificadorRegistro)
+            SymbolIF simbolo = scopeManager.searchSymbol(identificadorRegisto);
+            //SymbolIF simbolo2 = scopeManager.searchSymbol(campoRegistro);
+            TypeIF tipo = scopeManager.searchType(simbolo.getType().getName());
+
+            TypeRecord tipoRec = (TypeRecord) scopeManager.searchType(simbolo.getType().getName());
+
+            HashMap tablaCampos = tipoRec.getCamposTabla();
+
+              // Este se utiliza en el if y en el else
+              SymbolVariable simboloC = (SymbolVariable) tablaCampos.get(campoRegistro);
+              SymbolIF simboDeCampo = (SymbolIF) simboloC;
+
+            if (ident2 == null){
+
+              IntermedioExpresionAsignacionRegistros expAsignacion = new IntermedioExpresionAsignacionRegistros(registro, simbolo, simboloC, expLogica, scope);
+              expAsignacion.codigoIntermedio();
+
+             RESULT = expAsignacion;
+
+            } else {
+
+              //HashMap tablaCampos = tipoRec.getCamposTabla();
+              SymbolVariable simboloCIn = (SymbolVariable) tablaCampos.get(ident2);
+              SymbolIF simboDeCampoIntermedio = (SymbolIF) simboloCIn;
+
+              anidamientoReg++;
+              IntermedioExpresionAsignacionRegistros expAsignacion = new IntermedioExpresionAsignacionRegistros(registro, simbolo, simboloC, expLogica, scope, anidamientoReg);
+              expAsignacion.codigoIntermedio();
+
+             RESULT = expAsignacion;             
+            }
+
+            :};      
+
+
+//Expresión ACCESO a Registro
+expAcceso ::= ID:id POINT ID:campo 
+
+             {:
+
+                ScopeIF scope = scopeManager.getCurrentScope();
+
+                // Busco el simbolo para verificar que existe el simblolo
+
+                if ( !(scopeManager.containsSymbol(id.getLexema())) ) 
+                { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_no_declarado, id ); }
+                
+                // Se encuentra el símbolo
+                SymbolIF simbolo = scopeManager.searchSymbol(id.getLexema());
+                TypeIF tipo = scopeManager.searchType(simbolo.getType().getName());
+               
+               // Se verifica que el simbolo es de tipo estructurado
+                if ( !(tipo instanceof TypeRecord) )
+                { semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_incorrecto, id ); }
+
+                // Se busca en la tabla de tipos el tipo y si contiene el campo 
+                TypeRecord tipoRec = (TypeRecord) scopeManager.searchType(simbolo.getType().getName());
+                if ( tipoRec.getTypeCampo(campo.getLexema()) == null ) 
+                    semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_no_declarado, campo );
+
+                String tipoRegistro = id.getLexema();
+                String simboloCampo = campo.getLexema();
+
+                ExpresionAccesoRegistro registro = new ExpresionAccesoRegistro(tipoRegistro, null, simboloCampo);
+
+                RESULT = registro;
+
+             :}
+
+			       | ID:id POINT ID:id2 POINT ID:campo
+
+             {:
+
+                ScopeIF scope = scopeManager.getCurrentScope();
+
+                // Busco el simbolo para verificar que existe id (variable declarada)
+                if ( !(scopeManager.containsSymbol(id.getLexema())) ) 
+                { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_no_declarado, id ); }
+
+                // Se encuentra el tipo de la variable 
+                SymbolIF simbolo = scopeManager.searchSymbol(id.getLexema());
+
+                TypeIF tipo = scopeManager.searchType(simbolo.getType().getName());
+                // Se verifica que es de tipo Registro 
+                if ( !(tipo instanceof TypeRecord ) )
+                { semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_incorrecto, id ); }
+
+                // Se busca en la tabla de tipos el tipo (id) y si contiene el campo (id2) 
+                TypeRecord tipoRec = (TypeRecord) scopeManager.searchType(simbolo.getType().getName());
+                if ( tipoRec.getTypeCampo(id2.getLexema()) == null ) 
+                    semanticErrorManager.semanticFatalError(SemanticErrors.Campo_no_declarado, id2 );
+
+                HashMap tablaCampos = tipoRec.getCamposTabla();
+                SymbolVariable simboloC = (SymbolVariable) tablaCampos.get(id2.getLexema());
+
+                // Este el simbolo del campo de en medio
+                SymbolIF simboDeCampoIntermedio = (SymbolIF) simboloC;
+
+                TypeIF tipo2 = scopeManager.searchType(simboDeCampoIntermedio.getType().getName());
+ 
+                // Se verifica que id2 es de tipo estructurado
+                if ( !(tipo2 instanceof TypeRecord ) )
+                { semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_incorrecto, id2 ); }
+
+                // Se busca en la tabla de tipos el tipo (id2) y si contiene el campo 
+                TypeRecord tipoRec2 = (TypeRecord) scopeManager.searchType(simboDeCampoIntermedio.getType().getName());
+                if ( tipoRec2.getTypeCampo(campo.getLexema()) == null ) 
+                    semanticErrorManager.semanticFatalError(SemanticErrors.Campo_no_declarado, campo );
+
+                String ident1 = id.getLexema();
+                String ident2 = id2.getLexema();
+                String simboloCampo = campo.getLexema();
+
+                ExpresionAccesoRegistro registro = new ExpresionAccesoRegistro(ident1, ident2, simboloCampo);
+
+                RESULT = registro;
+            :} ;
+
+
+// **********************************************************************************************************
+//Invocar función
+// invFunc ::= ID OBRACKET invFuncA ;
+// invFuncA ::= CBRACKET 
+// 			| expresion CBRACKET 
+//			| expresion COMMA invFuncA ;
+
+// NUEVA VERSION SIN ERRORES ----------------
+
+//Invocar función 
+/*invFunc ::=  ID OBRACKET CBRACKET
+             | ID OBRACKET invFuncA CBRACKET ;
+
+
+invFuncA ::= expresion  
+            | invFuncA COMMA expresion;
+
+// Cambio la segunda regla
+invFucA ::= expresion  
+            | invFuncA COMMA expresion;
+
+invFucA ::= expresion  
+            | expresion COMMA invFuncA;
+
+*/
+
+// ----------------------------------------
+
+invFunc ::= ID:idFuncion OBRACKET CBRACKET
+
+            {: 
+
+            ScopeIF scope = scopeManager.getCurrentScope();
+          
+            // Si la funcion ha sido declarada
+            if (!(scopeManager.containsSymbol(idFuncion.getLexema()) || tablaTipos.containsType(idFuncion.getLexema()))) 
+            semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_Funcion_no_declarada, idFuncion );
+            
+            // Si corresponde con un simbolo de funcion
+            SymbolIF funcion = scopeManager.searchSymbol(idFuncion.getLexema());
+           // if (! (funcion.getType() instanceof TypeFunction) )
+           // semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_no_es_de_funcion, idFuncion );
+
+          // Si es de tipo función el símbolo
+          if (!(funcion instanceof SymbolFunction))
+          { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_no_es_de_funcion, idFuncion ); }
+
+              RESULT = new LlamadaSubprograma(idFuncion, new ListaParametros());:}
+
+          | ID:idFuncion OBRACKET invFuncA:listaParametrosEntrada CBRACKET
+          {:
+
+            ScopeIF scope = scopeManager.getCurrentScope();
+            ScopeIF padre = scopeManager.getParentScope();
+
+            // Si la funcion ha sido declarada
+            if (!(scopeManager.containsSymbol(idFuncion.getLexema()) || tablaTipos.containsType(idFuncion.getLexema()))) 
+              semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_Funcion_no_declarada, idFuncion );
+            
+            // Si corresponde con un simbolo de funcion
+            SymbolIF funcion = scopeManager.getScope(0).getSymbolTable().getSymbol(idFuncion.getLexema());
+            //if (! (funcion.getType() instanceof TypeFunction) )
+            //semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_no_es_de_funcion, idFuncion );
+
+
+          // Si es de tipo función el símbolo
+          if (!(funcion instanceof SymbolFunction))
+          { semanticErrorManager.semanticFatalError(SemanticErrors.Simbolo_no_es_de_funcion, idFuncion ); }
+
+
+            // Se comprueba si el numero de parametros formales y actuales coinciden
+
+            TypeFunction tipoFuncion = (TypeFunction) scopeManager.getScope(0).getTypeTable().getType(idFuncion.getLexema());
+
+            if (listaParametrosEntrada != null){
+              ListaParametros lista = new ListaParametros(listaParametrosEntrada);
+
+              if (!tipoFuncion.comparaParametros(listaParametrosEntrada))
+              { semanticErrorManager.semanticFatalError(SemanticErrors.Numero_incorrecto_parametros, idFuncion ); }
+
+            //En llamadas a funciones solo se admiten parámetros de tipo INT
+            for(Expresion exp : listaParametrosEntrada.getParametros()){
+              if (!(exp.getTipoExpresion() instanceof TypeInteger))
+              { semanticErrorManager.semanticFatalError(SemanticErrors.Tipo_parametro_incorrecto, idFuncion );}
+            }
+            
+            
+      } else if (tipoFuncion.tieneParametros()){
+        semanticErrorManager.semanticFatalError(SemanticErrors.Numero_incorrecto_parametros, idFuncion );
+      }
+
+      LlamadaSubprograma invFuncion = new LlamadaSubprograma(idFuncion, listaParametrosEntrada);
+
+      RESULT = invFuncion;
+            :};
+
+// Lista de parámetros de llamada a funcion
+invFuncA ::= expresion:exp
+      {:
+
+        // Las expresiones válidas son de ID, invFun, 
+        ListaParametros lista = new ListaParametros();
+        lista.add(exp);
+        RESULT = lista;
+      :}
+
+      | expresion:exp COMMA invFuncA:listaParametrosEntrada 
+      {:
+
+        ListaParametros lista = new ListaParametros(listaParametrosEntrada);
+        lista.add(exp);
+        RESULT = lista;
+
+      :};  
+
+// **********************************************************************************************************
+//    Sentencias
+// **********************************************************************************************************
+
+// Bloque de sentencias
+
+// Cambio estas reglas
+// bloqueSent ::= OBRACE  tiposLocales variablesLocales sentLocales  CBRACE;
+// tiposLocales ::= tipo tiposLocales  | ;
+// variablesLocales ::= variablesLocales variable |;
+
+// Por el equivalente
+bloqueSent ::= OBRACE  
+             {:
+
+
+            :} dectipos decvariables sentLocales:sentLoc {:
+
+                scopeManager.openScope();
+
+                BloqueInstrucciones sentencias = new BloqueInstrucciones();
+                sentencias.addInstrucciones(sentLoc.getListaSentencias());
+                RESULT = sentencias;
+
+              :}  CBRACE;
+
+
+// **********************************************************************************************************
+
+//Sentencia if
+// sent_if ::= IF OBRACKET expresion CBRACKET SEMICOLON 
+//        |IF OBRACKET expresion CBRACKET sentencia
+//        |IF OBRACKET expresion CBRACKET sentencia ELSE sentencia;
+
+// Se borra la primera regla 
+// sent_if ::= IF OBRACKET expresion CBRACKET sentencia
+//        |IF OBRACKET expresion CBRACKET sentencia ELSE sentencia;
+
+sent_if ::= IF OBRACKET:ap expresion:exp CBRACKET sentencia:bloqueSentencias
+         // |IF OBRACKET:ap expresion:exp CBRACKET bloqueSent:bloqueSent
+        {:
+
+         IntermedioSentenciaSeleccion sentSeleccion = new IntermedioSentenciaSeleccion(exp, bloqueSentencias);
+         sentSeleccion.codigoIntermedio();
+         RESULT = sentSeleccion;
+
+        :}
+
+        |IF OBRACKET:ap expresion:exp CBRACKET sentencia:bloqueIf ELSE sentencia:bloqueElse    
+        {:
+
+         IntermedioSentenciaSeleccion sentSeleccion = new IntermedioSentenciaSeleccion(exp, bloqueIf, bloqueElse);
+         sentSeleccion.codigoIntermedio();
+         RESULT = sentSeleccion;
+
+        :};
+
+// **********************************************************************************************************
+//Sentencia for
+ // sentFor ::=  sentForA SEMICOLON | sentForA sentencia;
+			 
+ // sentForA ::= FOR OBRACKET ID ASSIGMENT expLog SEMICOLON expresion SEMICOLON expresion CBRACKET
+ // 			|FOR OBRACKET expAcceso ASSIGMENT expLog SEMICOLON expresion SEMICOLON expresion CBRACKET;
+
+
+// Hago cambios y unifico ambas reglas
+// quito la que termina en ; Lo que implica que por lo menos tiene que haber una sentencia o un bloque de sentencias
+
+// sentForA ::= FOR OBRACKET ID ASSIGMENT expLog SEMICOLON expLog SEMICOLON expAsig CBRACKET sentencia
+//      |FOR OBRACKET expAcceso ASSIGMENT expLog SEMICOLON expLog SEMICOLON expAsig CBRACKET sentencia;
+
+       
+sentFor ::= FOR OBRACKET ID:id ASSIGMENT expLog:expLogica SEMICOLON expLog:exp1 SEMICOLON expAsig:exp2 CBRACKET sentencia:sents
+
+          {:
+            // Se tiene que comprobar que id es de tipo entero y que ha sido declarado
+            if (!(scopeManager.containsSymbol(id.getLexema())))
+                semanticErrorManager.semanticFatalError(SemanticErrors.Indice_no_declarado, id );
+
+               // Se comprueba que la inicializacion de la variable es una Constante literal
+             if (!(expLogica instanceof ExpresionConstanteLiteral))
+               semanticErrorManager.semanticFatalError(SemanticErrors.Valor_indice_incorrecto, id );
+
+              // Se comprueba que exp1 se hace un control relacional válido (solamente posible con >) y equivale a >=
+             if (!(exp1 instanceof ExpresionMAYOR))
+               semanticErrorManager.semanticFatalError(SemanticErrors.Expresion_logica_no_valida, id );
+
+
+              // Se comprueba que id2 es igual a id1 (para evitar un bucle infinito) 
+/*
+              String indice = id.getLexema();
+              //String indiceSiguiente = id2.getLexema();
+
+              Token indice2          = exp2.getId();
+
+              String indiceSiguiente = indice2.getLexema();
+              System.out.println(indiceSiguiente);
+             // SymbolIF contador = exp2.getSimbolo();
+             // String indiceSiguiente = contador.getName();
+       
+            if(!(simbolo.getType().getName().equals(expLogica.getTipoExpresion().getName())))
+
+              if (!(indice.equals(indiceSiguiente)))
+                semanticErrorManager.semanticFatalError(SemanticErrors.Variable_no_coincide, id);*/
+/*
+              // Se comprueba que en exp2 se decrementa la variable de control del FOR
+              if (!(exp2.getExpresion() instanceof ExpresionRESTA))
+                semanticErrorManager.semanticFatalError(SemanticErrors.Expresion_logica_no_valida_2, m );
+*/
+              String    nombre = id.getLexema();
+              SymbolIF simbolo = scopeManager.searchSymbol(nombre);
+              TypeIF      tipo = simbolo.getType();
+
+             IntermedioExpresionAsignacion expAsignacion = new IntermedioExpresionAsignacion(simbolo, expLogica);
+             // Código intermedio
+             IntermedioSentenciaRepeticion sentRepeticion = new IntermedioSentenciaRepeticion(expAsignacion, exp1, exp2, sents);
+             sentRepeticion.codigoIntermedio();
+             RESULT = sentRepeticion; 
+            :}
+
+
+      |FOR OBRACKET expAcceso:registro ASSIGMENT expLog:expLogica SEMICOLON expLog:exp1 SEMICOLON expAsig:exp2 CBRACKET sentencia:sents
+
+      {:
+            String identificadorRegisto = registro.getIdentificador();
+            String ident2 = registro.getIdentificador2();
+            String campoRegistro = registro.getCampo();
+
+            // Busco símbolo del tipo (identificadorRegistro)
+            SymbolIF simbolo = scopeManager.searchSymbol(identificadorRegisto);
+            //SymbolIF simbolo2 = scopeManager.searchSymbol(campoRegistro);
+            TypeIF tipo = scopeManager.searchType(simbolo.getType().getName());
+
+            TypeRecord tipoRec = (TypeRecord) scopeManager.searchType(simbolo.getType().getName());
+
+            HashMap tablaCampos = tipoRec.getCamposTabla();
+            SymbolVariable simboloC = (SymbolVariable) tablaCampos.get(campoRegistro);
+            SymbolIF simboloDeCampo = (SymbolIF) simboloC;
+
+            ScopeIF scope = scopeManager.getCurrentScope();
+/*            Variable var = new Variable(identificadorRegisto, scope);
+            var.setAmbito(simbolo.getScope());
+
+            Variable var2 = new Variable(campoRegistro, scope);
+
+            // Senecesita coger la posición del campo dentro del registro
+            var2.setDesplazamientoCampo(simboloC.getDesplazamiento());*/
+
+             IntermedioExpresionAsignacionRegistros expAsignacion = new IntermedioExpresionAsignacionRegistros(registro, simbolo, simboloC, expLogica, scope);
+             IntermedioSentenciaRepeticion sentRepeticion = new IntermedioSentenciaRepeticion(expAsignacion, exp1, exp2, sents);
+             sentRepeticion.codigoIntermedio();
+             RESULT = sentRepeticion; 
+
+        :};   
+
+
+// **********************************************************************************************************
+
+//Sentencia printi
+// Para imprimir valores
+// sentEntrada ::= PRINTI OBRACKET ID CBRACKET SEMICOLON 
+// 				| PRINTI OBRACKET expresion CBRACKET SEMICOLON
+// 				| PRINTI OBRACKET CBRACKET SEMICOLON;
+
+
+// Cambio el nombre
+// Eliminio primera regla ya que expresión contiene ID
+
+sentSalidaValor ::= PRINTI OBRACKET expresion:exp CBRACKET SEMICOLON
+
+        {:
+               IntermedioSentenciaSalidaValor sWrite = new IntermedioSentenciaSalidaValor(exp);
+               sWrite.codigoIntermedio();      
+               RESULT = sWrite;  
+
+        :}
+
+        | PRINTI OBRACKET CBRACKET SEMICOLON
+
+        {:
+              IntermedioSentenciaSalidaValor sWrite = new IntermedioSentenciaSalidaValor();
+              sWrite.codigoIntermedio();
+              RESULT = sWrite;
+
+          :};
+
+// **********************************************************************************************************
+
+//Sentencia printc
+// Para imprimir caracteres
+// sentSalida ::= PRINTC OBRACKET TCHAIN CBRACKET SEMICOLON;
+
+
+// Cambio el nombre
+sentSalidaCadena ::= PRINTC OBRACKET TCHAIN:sLiteral CBRACKET SEMICOLON
+
+          {:
+              IntermedioSentenciaSalidaCadena sWrite = new IntermedioSentenciaSalidaCadena(sLiteral);
+              sWrite.codigoIntermedio();
+              RESULT = sWrite;
+          :};
+
+// **********************************************************************************************************
+
+//Sentencias
+
+// sentLocales ::= sentencia sentLocales | ; 
+
+// sentencia ::= bloqueSent
+// 			 | sentFor 
+// 			 | sent_if 
+// 			 | sentEntrada
+// 			 | sentSalida	 
+// 			 | expAsig SEMICOLON 			 	
+// 			 | invFunc SEMICOLON 				 		 
+// 			 | RETURN SEMICOLON
+// 			 | RETURN expresion SEMICOLON;
+		
+sentLocales ::= sentencia:cualquierSentencia  sentLocales:sentLoc
+
+              {: 
+                Sentencias sentencias = new Sentencias();
+                sentencias.addSentencia(cualquierSentencia);
+                sentencias.addSentencias(sentLoc.getListaSentencias());
+                RESULT = sentencias; 
+              :}
+
+              | {:
+                  Sentencias sentencias=new Sentencias();
+                  RESULT = sentencias;
+                :} ; 
+
+
+sentencia ::= bloqueSent: bloqueSentencias {: RESULT = bloqueSentencias; :}
+       | sentFor:sentenciaFOR {: RESULT = sentenciaFOR; :}
+       | sent_if:sentIF {: RESULT = sentIF; :} 
+       | sentSalidaValor:writeValor   {: RESULT = writeValor;  :}
+       | sentSalidaCadena:writeCadena {: RESULT = writeCadena; :}  
+       | expAsig:expAsignacion  SEMICOLON  {: RESULT = expAsignacion; :}
+       | invFunc:llamadaSubP SEMICOLON  
+
+          {: 
+
+      // No se permite que la función invocada devuelva un tipo INT en sentencias
+
+        Token id         = llamadaSubP.getId();
+        String nombre    = id.getLexema();
+        SymbolIF simbolo = scopeManager.searchSymbol(nombre);
+      //  TypeIF tipoRetorno = scopeManager.searchType(id.getLexema());
+        
+        SymbolFunction simboloFuncion = (SymbolFunction) simbolo;
+
+        if (simboloFuncion.get_devuelve_tipo() instanceof TypeInteger)
+        {semanticErrorManager.semanticFatalError(SemanticErrors.Retorno_de_funcion_incorrecto_2, id); }
+
+        // Código Intermedio
+        // IntermedioExpresionLlamadaSubprograma expLlSub = new IntermedioExpresionLlamadaSubprograma(llamadaSubP);
+        IntermedioExpresionLlamadaSubprograma expLlSub = new IntermedioExpresionLlamadaSubprograma(simboloFuncion, llamadaSubP);
+          expLlSub.codigoIntermedio();
+                   RESULT = expLlSub;  
+
+         :}  
+
+       | RETURN SEMICOLON
+          {:
+          IntermedioSentenciaRETURN sent = new IntermedioSentenciaRETURN();
+          RESULT = sent;
+         :} 
+       | RETURN expresion:exp SEMICOLON
+         {:
+
+          int contRetornos = retorno + 1;
+
+          String nombre = "return" + String.valueOf(contRetornos);
+          TypeInteger tipo = new TypeInteger(scopeManager.getCurrentScope());
+          ScopeIF ambito = scopeManager.getCurrentScope();
+          SymbolReturn retornoFuncion = new SymbolReturn(ambito, nombre, tipo);
+          // tablaSimbolos.addSymbol(retornoFuncion);
+
+          IntermedioSentenciaRETURN sentRet = new IntermedioSentenciaRETURN(exp, retornoFuncion);
+          sentRet.codigoIntermedio();
+          RESULT = sentRet;
+
+         :};
